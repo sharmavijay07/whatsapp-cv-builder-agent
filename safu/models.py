@@ -170,6 +170,11 @@ class Outbound:
     token: str | None = None
     filename: str | None = None
     caption: str = ""
+    buttons: list[tuple[str, str]] | None = None
+    template_name: str = ""
+    template_language: str = "en"
+    url: str = ""
+    url_title: str = ""
 
 
 @dataclass

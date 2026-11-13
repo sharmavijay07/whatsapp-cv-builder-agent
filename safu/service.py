@@ -15,10 +15,11 @@ from safu.extract import extract_any, fetch_url, html_to_text
 from safu.logutil import log_event
 from safu.models import Incoming, Order, Outbound, Session, TurnResult
 from safu.parse import EMAIL_RE, looks_like_name, parse_cv, parse_job
-from safu.payments import StubPaymentGateway, build_payments
+from safu.payments import PaymentGateway, build_payments, normalize_msisdn
 from safu.samples import CV_TEXT, JOB_HTML, JOB_TEXT, OCR_TEXT, text_to_image, text_to_pdf
 from safu.store import build_store
 from safu.vault import FileVault
+from safu.vision import build_vision
 from safu.whatsapp import CloudWhatsApp
 
 JOB_PHOTO_TEXT = (
@@ -77,14 +78,7 @@ class Channel:
         runtime = self.runtime
         if self.cloud is not None and runtime is not None:
             for message in messages:
-                if message.kind == "text":
-                    self.cloud.send_text(wa_id, message.text)
-                elif message.token:
-                    found = runtime.vault.read(message.token, runtime.clock.now())
-                    if found is None:
-                        raise DeliveryError("missing_file")
-                    item, data = found
-                    self.cloud.send_document(wa_id, item.filename, data, message.caption or item.filename)
+                self._send_cloud(wa_id, message, runtime)
         session = runtime.sessions.get(wa_id) if runtime is not None else None
         if session is None:
             return
@@ -102,6 +96,41 @@ class Channel:
                 }
             )
 
+    def _send_cloud(self, wa_id: str, message: Outbound, runtime: "Runtime") -> None:
+        cloud = self.cloud
+        if cloud is None:
+            return
+        if message.kind == "template":
+            # Outside the 24-hour customer-care window Meta rejects free text.
+            cloud.send_template(
+                wa_id,
+                message.template_name or runtime.settings.whatsapp_followup_template,
+                message.template_language or runtime.settings.whatsapp_template_language,
+            )
+            return
+        if message.kind == "document" or message.token:
+            found = runtime.vault.read(message.token or "", runtime.clock.now())
+            if found is None:
+                raise DeliveryError("missing_file")
+            item, data = found
+            cloud.send_document(wa_id, item.filename, data, message.caption or item.filename)
+            return
+        if message.kind == "cta_url" and message.url:
+            try:
+                cloud.send_cta_url(wa_id, message.text, message.url_title or "Pay now", message.url)
+                return
+            except DeliveryError:
+                cloud.send_text(wa_id, message.text)
+                return
+        if message.buttons and len(message.text) <= 1024:
+            try:
+                cloud.send_buttons(wa_id, message.text, message.buttons)
+                return
+            except DeliveryError:
+                cloud.send_text(wa_id, message.text)
+                return
+        cloud.send_text(wa_id, message.text)
+
 
 @dataclass
 class Runtime:
@@ -114,13 +143,20 @@ class Runtime:
     channel: Channel
     cloud: CloudWhatsApp | None
     llm: object | None
-    payments: StubPaymentGateway
+    vision: object | None
+    payments: PaymentGateway
     clock: Clock
     lock: threading.RLock
     work_dir: Path
 
 
-def build_runtime(settings: Settings, llm=AUTO, channel: Channel | None = None, cloud: CloudWhatsApp | None = None) -> Runtime:
+def build_runtime(
+    settings: Settings,
+    llm=AUTO,
+    channel: Channel | None = None,
+    cloud: CloudWhatsApp | None = None,
+    payments: PaymentGateway | None = None,
+) -> Runtime:
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     store, store_name = build_store(
         settings.order_store,
@@ -142,11 +178,20 @@ def build_runtime(settings: Settings, llm=AUTO, channel: Channel | None = None, 
         store_name=store_name,
         sessions={},
         vault=FileVault(settings.data_dir / "files", settings.file_ttl_seconds, settings.max_hold_seconds),
-        alerter=Alerter(settings.alert_webhook_url, settings.log_path),
+        alerter=Alerter(
+            settings.alert_webhook_url,
+            settings.log_path,
+            gmail_user=settings.gmail_user,
+            gmail_app_password=settings.gmail_app_password,
+            owner_email=settings.owner_email,
+            telegram_bot_token=settings.telegram_bot_token,
+            telegram_chat_id=settings.telegram_chat_id,
+        ),
         channel=channel,
         cloud=cloud,
         llm=llm,
-        payments=build_payments(settings.payment_provider),
+        vision=build_vision(settings),
+        payments=payments or build_payments(settings),
         clock=Clock(),
         lock=threading.RLock(),
         work_dir=settings.data_dir / "work",
@@ -411,7 +456,10 @@ def advance(rt: Runtime, session: Session) -> TurnResult:
         preview = summary_text(session).split("Reply YES")[0].strip()
         return TurnResult([say(_missing_prompt(missing[0]) + "\n\n" + preview)])
     _set_step(rt, session, "confirm", None)
-    return TurnResult([say(summary_text(session))])
+    message = say(summary_text(session))
+    if rt.channel.cloud is not None and len(message.text) <= 1024:
+        message.buttons = [("yes", "YES"), ("human", "HUMAN")]
+    return TurnResult([message])
 
 
 def _after_sources(rt: Runtime, session: Session) -> TurnResult:
@@ -473,13 +521,13 @@ def ingest_bytes(rt: Runtime, session: Session, data: bytes, filename: str | Non
     if len(data) > 8_000_000:
         return TurnResult([say("That file is larger than 8 MB. Send a smaller PDF.")])
     try:
-        text = extract_any(filename, content_type, data)
+        text = extract_any(filename, content_type, data, vision=rt.vision)
     except ExtractError as exc:
         session.unreadable += 1
         if session.unreadable >= 2:
             return do_handoff(rt, session, exc.code)
         if exc.code == "ocr_unavailable":
-            detail = "Photo reading isn't available on this machine (tesseract is missing). Send a PDF or paste the text."
+            detail = "I couldn't read that photo. Send a PDF, a Word file, or paste the text."
         elif exc.code == "unsupported_type":
             detail = "Send a PDF, Word file, photo, or plain text."
         else:
@@ -516,12 +564,65 @@ def accept_missing(rt: Runtime, session: Session, text: str) -> TurnResult:
     return advance(rt, session)
 
 
+def _payer_phone(session: Session) -> str | None:
+    return normalize_msisdn(session.phone) or normalize_msisdn(session.order.wa_id)
+
+
+def _is_pay_word(text: str) -> bool:
+    return bool(re.match(r"^\s*(pay|paid|mpesa|lipa|stk|link)\b", text or "", re.IGNORECASE))
+
+
+def _payment_message(rt: Runtime, intent) -> Outbound:
+    message = say(intent.instructions)
+    if intent.checkout_url:
+        message.url = intent.checkout_url
+        message.url_title = "Pay now"
+        if rt.channel.cloud is not None and len(message.text) <= 1024:
+            message.kind = "cta_url"
+    elif rt.payments.name == "stub" and rt.channel.cloud is not None and len(message.text) <= 1024:
+        message.buttons = [("pay", "PAY")]
+    return message
+
+
+def _ready_pack_result(rt: Runtime, session: Session) -> TurnResult | None:
+    if not (session.paid or session.order.paid):
+        return None
+    if session.order.status == "delivered":
+        return TurnResult(
+            [say("Your pack was already sent. Reply RESEND for fresh links, or NEW to start another application.")]
+        )
+    if session.order.pack_id and rt.vault.pack_ready(session.order.pack_id):
+        return TurnResult(
+            resend_replies(rt, session, "Payment is confirmed. Sending your documents again."),
+            finalize=session.order.status != "delivered",
+        )
+    return None
+
+
 def accept_confirm(rt: Runtime, session: Session, text: str) -> TurnResult:
     if _is_yes(text):
         session.confirmed = True
+        if session.record is None or session.job is None:
+            return TurnResult([say("I still need your CV and the job post before I can write the pack.")])
+        if not rt.settings.require_payment:
+            return generate(rt, session)
         _set_step(rt, session, "payment", None)
-        intent = rt.payments.start(session.order.id, rt.settings.price_amount, rt.settings.price_currency)
-        return TurnResult([say(intent.instructions)])
+        intent = rt.payments.start(
+            session.order.id,
+            rt.settings.price_amount,
+            rt.settings.price_currency,
+            phone=_payer_phone(session),
+            email=session.email,
+        )
+        if not rt.payments.ready and rt.payments.name != "stub":
+            rt.alerter.fire(
+                "warning",
+                "payment_not_configured",
+                session.order.id,
+                rt.payments.name,
+                rt.clock.now().isoformat(),
+            )
+        return TurnResult([_payment_message(rt, intent)])
     match = CORRECTION_RE.match(text.strip())
     if match:
         field, value = match.group(1).lower(), match.group(2).strip()
@@ -570,7 +671,13 @@ def generate(rt: Runtime, session: Session) -> TurnResult:
     pack = compose(rt, session)
     files = render_pack(pack)
     session.order.pack_id = rt.vault.put_pack(session.order.id, files, rt.clock.now())
-    rt.alerter.fire("info", "payment_stubbed", session.order.id, "stub", rt.clock.now().isoformat())
+    rt.alerter.fire(
+        "info",
+        "payment_confirmed",
+        session.order.id,
+        rt.payments.name,
+        rt.clock.now().isoformat(),
+    )
     replies = [say(delivery_text(pack))]
     base = rt.settings.public_base_url
     for item in rt.vault.list_pack(session.order.pack_id):
@@ -587,11 +694,24 @@ def generate(rt: Runtime, session: Session) -> TurnResult:
 
 
 def accept_payment(rt: Runtime, session: Session, text: str) -> TurnResult:
-    if not rt.payments.confirm(session.order.id, text):
-        return TurnResult([say("Reply PAY to record the stub payment. Nothing is charged.")])
-    if session.record is None or session.job is None:
-        return TurnResult([say("I still need your CV and the job post before I can write the pack.")])
-    return generate(rt, session)
+    existing = _ready_pack_result(rt, session)
+    if existing is not None:
+        return existing
+    if rt.payments.confirm(session.order.id, text):
+        if session.record is None or session.job is None:
+            return TurnResult([say("I still need your CV and the job post before I can write the pack.")])
+        return generate(rt, session)
+    phone = normalize_msisdn(text)
+    if phone or _is_pay_word(text):
+        intent = rt.payments.start(
+            session.order.id,
+            rt.settings.price_amount,
+            rt.settings.price_currency,
+            phone=phone or _payer_phone(session),
+            email=session.email,
+        )
+        return TurnResult([_payment_message(rt, intent)])
+    return TurnResult([say(rt.payments.status_line(session.order.id))])
 
 
 def do_handoff(rt: Runtime, session: Session, reason: str) -> TurnResult:
@@ -750,7 +870,7 @@ def turn(rt: Runtime, session: Session, inc: Incoming) -> TurnResult:
         if urlparse(url).path.rstrip("/") == "/samples/job":
             return route_text(rt, session, html_to_text(JOB_HTML))
         try:
-            fetched = fetch_url(url, rt.settings.allow_local_urls)
+            fetched = fetch_url(url, rt.settings.allow_local_urls, vision=rt.vision)
         except FetchError:
             return TurnResult([say("I couldn't read that link. Paste the text, or send a PDF.")])
         return route_text(rt, session, fetched)
@@ -989,6 +1109,18 @@ def run_recovery(rt: Runtime) -> list[str]:
     return fixed
 
 
+def followup_message(rt: Runtime) -> Outbound:
+    """48 hours is outside Meta's 24-hour window, so a live channel must use a template."""
+    if rt.channel.cloud is not None:
+        return Outbound(
+            kind="template",
+            text=FOLLOWUP_TEXT,
+            template_name=rt.settings.whatsapp_followup_template,
+            template_language=rt.settings.whatsapp_template_language,
+        )
+    return say(FOLLOWUP_TEXT)
+
+
 def run_followups(rt: Runtime, now: datetime | None = None) -> list[str]:
     now = now or rt.clock.now()
     cutoff = now - timedelta(hours=rt.settings.followup_after_hours)
@@ -1000,7 +1132,7 @@ def run_followups(rt: Runtime, now: datetime | None = None) -> list[str]:
             if _parse_dt(order.updated_at) > cutoff:
                 continue
             try:
-                rt.channel.deliver(order.wa_id, [say(FOLLOWUP_TEXT)])
+                rt.channel.deliver(order.wa_id, [followup_message(rt)])
             except DeliveryError:
                 rt.alerter.fire("critical", "delivery_failed", order.id, "followup_failed", now.isoformat())
                 continue
@@ -1010,6 +1142,98 @@ def run_followups(rt: Runtime, now: datetime | None = None) -> list[str]:
             rt.alerter.fire("info", "followup_sent", order.id, "abandoned_48h", now.isoformat())
             sent.append(order.id)
     return sent
+
+
+def _fail_delivery(rt: Runtime, session: Session, code: str) -> None:
+    session.order.last_error_code = code
+    session.order.delivery_attempts += 1
+    if session.order.pack_id:
+        session.order.step = "generating"
+    session.order.status = "active"
+    session.order.updated_at = rt.clock.now().isoformat()
+    rt.store.save(session.order)
+    write_snapshot(rt, session)
+    rt.alerter.fire("critical", code, session.order.id, code, rt.clock.now().isoformat())
+
+
+def fulfill_payment(rt: Runtime, order_id: str, provider: str) -> str:
+    """Build and send the pack only after a gateway has marked the order paid."""
+    with rt.lock:
+        order = rt.store.get(order_id)
+        if order is None:
+            rt.alerter.fire("warning", "payment_unmatched", order_id, provider, rt.clock.now().isoformat())
+            return "unknown"
+        if order.status == "closed":
+            return "closed"
+        if order.status == "delivered":
+            return "already_delivered"
+        session = ensure_session(rt, order)
+        session.paid = True
+        session.order.paid = True
+        session.confirmed = True
+        if session.record is None or session.job is None:
+            session.order.step = "ask_cv"
+            session.order.status = "active"
+            session.order.updated_at = rt.clock.now().isoformat()
+            rt.store.save(session.order)
+            write_snapshot(rt, session)
+            try:
+                rt.channel.deliver(
+                    order.wa_id,
+                    [say("Payment confirmed. I no longer have the CV in front of me. Please send it again.")],
+                )
+            except DeliveryError:
+                _fail_delivery(rt, session, "delivery_failed")
+            return "needs_sources"
+        existing = _ready_pack_result(rt, session)
+        try:
+            if existing is not None:
+                result = existing
+            else:
+                result = generate(rt, session)
+            if result.replies:
+                rt.channel.deliver(order.wa_id, result.replies)
+            if result.finalize:
+                finalize(rt, session)
+            return "delivered"
+        except DeliveryError:
+            _fail_delivery(rt, session, "delivery_failed")
+            return "delivery_failed"
+        except Exception as exc:
+            log_event(
+                "generation_failed",
+                rt.settings.log_path,
+                order_id=order.id,
+                error_code="generation_failed",
+                reason=type(exc).__name__,
+            )
+            _fail_delivery(rt, session, "generation_failed")
+            try:
+                rt.channel.deliver(
+                    order.wa_id,
+                    [say("Payment confirmed. I hit an error while preparing the documents and will retry.")],
+                )
+            except DeliveryError:
+                pass
+            return "generation_failed"
+
+
+def notify_payment_failed(rt: Runtime, order_id: str, reason: str) -> None:
+    with rt.lock:
+        order = rt.store.get(order_id)
+        if order is None or order.status in {"delivered", "closed"}:
+            return
+        session = ensure_session(rt, order)
+        rt.alerter.fire("warning", "payment_failed", order_id, reason[:120], rt.clock.now().isoformat())
+        try:
+            rt.channel.deliver(
+                order.wa_id,
+                [say("The payment did not complete. Reply PAY to try again, or say HUMAN. Nothing was sent.")],
+            )
+        except DeliveryError:
+            session.order.last_error_code = "delivery_failed"
+        session.order.updated_at = rt.clock.now().isoformat()
+        rt.store.save(session.order)
 
 
 def run_sweep(rt: Runtime, now: datetime | None = None) -> int:

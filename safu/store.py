@@ -68,6 +68,18 @@ class SupabaseOrderStore:
         )
         response.raise_for_status()
 
+    def get(self, order_id: str) -> Order | None:
+        response = self.client.get(
+            f"{self.url}/orders",
+            headers=self.headers,
+            params={"id": f"eq.{order_id}", "select": ",".join(ORDER_FIELDS), "limit": "1"},
+        )
+        response.raise_for_status()
+        rows = response.json()
+        if not rows:
+            return None
+        return order_from_row(rows[0])
+
     def get_by_wa(self, wa_id: str) -> Order | None:
         response = self.client.get(
             f"{self.url}/orders",

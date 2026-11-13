@@ -32,7 +32,7 @@ def extract_docx(data: bytes) -> str:
     return text
 
 
-def extract_image(data: bytes) -> str:
+def _tesseract(data: bytes) -> str:
     try:
         import pytesseract
         from PIL import Image
@@ -41,14 +41,27 @@ def extract_image(data: bytes) -> str:
     try:
         image = Image.open(io.BytesIO(data))
         text = pytesseract.image_to_string(image, config="--psm 6")
-    except pytesseract.TesseractNotFoundError as exc:
-        raise ExtractError("ocr_unavailable") from exc
     except Exception as exc:
+        name = type(exc).__name__
+        if name == "TesseractNotFoundError":
+            raise ExtractError("ocr_unavailable") from exc
         raise ExtractError("ocr_failed") from exc
-    text = text.strip()
+    text = (text or "").strip()
     if len(text) < 8:
         raise ExtractError("ocr_failed")
     return text
+
+
+def extract_image(data: bytes, vision=None, content_type: str | None = None) -> str:
+    """Groq vision first when a reader is configured, then the local Tesseract binary."""
+    if vision is not None:
+        try:
+            text = (vision.read_image(data, content_type) or "").strip()
+        except Exception:
+            text = ""
+        if len(text) >= 8:
+            return text
+    return _tesseract(data)
 
 
 def html_to_text(html: str) -> str:
@@ -58,7 +71,21 @@ def html_to_text(html: str) -> str:
     return soup.get_text("\n")
 
 
-def extract_any(filename: str | None, content_type: str | None, data: bytes) -> str:
+def _image_type(filename: str, content_type: str) -> str:
+    if content_type.startswith("image/"):
+        return content_type
+    if filename.endswith(".png"):
+        return "image/png"
+    if filename.endswith((".jpg", ".jpeg")):
+        return "image/jpeg"
+    if filename.endswith(".webp"):
+        return "image/webp"
+    if filename.endswith((".tif", ".tiff")):
+        return "image/tiff"
+    return "image/png"
+
+
+def extract_any(filename: str | None, content_type: str | None, data: bytes, vision=None) -> str:
     name = (filename or "").lower()
     ctype = (content_type or "").lower()
     if name.endswith(".pdf") or "pdf" in ctype:
@@ -70,7 +97,7 @@ def extract_any(filename: str | None, content_type: str | None, data: bytes) -> 
     if name.endswith(".html") or "html" in ctype:
         return html_to_text(data.decode("utf-8", errors="replace"))
     if ctype.startswith("image/") or name.endswith((".png", ".jpg", ".jpeg", ".webp", ".tif", ".tiff")):
-        return extract_image(data)
+        return extract_image(data, vision=vision, content_type=_image_type(name, ctype))
     raise ExtractError("unsupported_type")
 
 
@@ -95,7 +122,7 @@ def assert_public_url(url: str, allow_local: bool) -> None:
         raise FetchError("blocked_host")
 
 
-def fetch_url(url: str, allow_local: bool, client: httpx.Client | None = None) -> str:
+def fetch_url(url: str, allow_local: bool, client: httpx.Client | None = None, vision=None) -> str:
     assert_public_url(url, allow_local)
     own_client = client is None
     http = client or httpx.Client(timeout=10, follow_redirects=False)
@@ -116,7 +143,7 @@ def fetch_url(url: str, allow_local: bool, client: httpx.Client | None = None) -
     if "word" in ctype or path.endswith(".docx"):
         return extract_docx(data)
     if ctype.startswith("image/"):
-        return extract_image(data)
+        return extract_image(data, vision=vision, content_type=ctype.split(";", 1)[0])
     decoded = data.decode("utf-8", errors="replace")
     if "html" in ctype or decoded.lstrip()[:1] == "<":
         return html_to_text(decoded)

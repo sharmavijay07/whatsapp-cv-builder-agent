@@ -19,6 +19,23 @@ def test_render_blueprint_is_a_free_python_service():
     assert "https://api.groq.com/openai/v1" in text
     assert "ORDER_STORE" in text
     assert "sqlite" in text
+    for key in (
+        "ADMIN_TOKEN",
+        "CRON_SECRET",
+        "MPESA_CONSUMER_KEY",
+        "MPESA_PASSKEY",
+        "PAYSTACK_SECRET_KEY",
+        "GMAIL_APP_PASSWORD",
+        "OWNER_EMAIL",
+        "GROQ_VISION_MODEL",
+        "WHATSAPP_FOLLOWUP_TEMPLATE",
+    ):
+        assert key in text
+    dockerfile = Path("Dockerfile").read_text(encoding="utf-8")
+    assert "tesseract-ocr" in dockerfile
+    assert 'CMD ["python", "-m", "safu"]' in dockerfile
+    template = Path("meta/safu_followup_48h.json").read_text(encoding="utf-8")
+    assert "safu_followup_48h" in template
 
 
 def test_port_and_render_url(monkeypatch):

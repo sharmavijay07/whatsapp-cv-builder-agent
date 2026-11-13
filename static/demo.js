@@ -190,7 +190,7 @@ async function postAction(path) {
 document.querySelector("#fail").addEventListener("click", () => postAction("simulate-failure"));
 document.querySelector("#abandon").addEventListener("click", () => postAction("simulate-abandonment"));
 document.querySelector("#recover").addEventListener("click", async () => {
-  const response = await fetch("/api/ops/recovery/run", { method: "POST" });
+  const response = await fetch("/api/demo/recovery/run", { method: "POST" });
   const body = await response.json();
   if (!response.ok) {
     setNote("Recovery could not run.");

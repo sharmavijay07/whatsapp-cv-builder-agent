@@ -29,6 +29,25 @@ def settings(tmp_path, monkeypatch):
     loaded.file_ttl_seconds = 1800
     loaded.allow_local_urls = True
     loaded.whatsapp_app_secret = ""
+    loaded.payment_provider = "stub"
+    loaded.require_payment = True
+    loaded.price_amount = 1500
+    loaded.price_currency = "KES"
+    loaded.admin_token = ""
+    loaded.ops_token = ""
+    loaded.cron_secret = ""
+    loaded.gmail_user = ""
+    loaded.gmail_app_password = ""
+    loaded.owner_email = ""
+    loaded.telegram_bot_token = ""
+    loaded.telegram_chat_id = ""
+    loaded.alert_webhook_url = ""
+    loaded.paystack_secret_key = ""
+    loaded.mpesa_consumer_key = ""
+    loaded.mpesa_consumer_secret = ""
+    loaded.mpesa_passkey = ""
+    loaded.mpesa_shortcode = ""
+    loaded.groq_api_key = ""
     return loaded
 
 

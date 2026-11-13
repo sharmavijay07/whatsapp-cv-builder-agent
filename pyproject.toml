@@ -1,0 +1,8 @@
+[project]
+name = "safu"
+version = "1.0.0"
+description = "WhatsApp agent that builds fact-checked, job-matched CV packs."
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

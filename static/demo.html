@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Safu demo chat</title>
+  <link rel="icon" href="/favicon.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,560&family=Outfit:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/styles.css">
+  <link rel="stylesheet" href="/static/demo.css">
+</head>
+<body class="demo-body">
+  <header class="nav">
+    <a class="logo" href="/">Sa<span>fu</span></a>
+    <a class="btn ghost" href="/">Back to the service</a>
+  </header>
+  <main class="demo-shell">
+    <section class="demo-side">
+      <p class="eyebrow">Mock mode</p>
+      <h1>A WhatsApp order, without credentials.</h1>
+      <p class="llm-line" id="llm-line">Checking the model…</p>
+      <p class="muted">Amina Wanjiku is fictional. Play the sample order, or type the way a job seeker would. Say HUMAN to hand off. The panel on this page shows the database row updating.</p>
+      <div class="tools">
+        <button class="primary" id="play" type="button">Play sample order</button>
+        <button type="button" data-sample="cv">Sample CV</button>
+        <button type="button" data-sample="job">Sample job</button>
+        <button type="button" data-sample="photo">Sample photo</button>
+        <button type="button" data-sample="link">Sample link</button>
+        <button type="button" id="fail">Simulate failed delivery</button>
+        <button type="button" id="recover">Run recovery</button>
+        <button type="button" id="abandon">Send the 48-hour follow-up</button>
+        <button type="button" id="reset">Reset chat</button>
+      </div>
+      <p class="note" id="note" role="status"></p>
+      <div class="inspector">
+        <div id="flag" class="flag">Waiting for an order…</div>
+        <h2 style="font-size:22px;margin:8px 0 0;">Database row</h2>
+        <pre id="db">{ }</pre>
+        <h2 style="font-size:22px;margin:8px 0 0;">Alerts</h2>
+        <pre id="alerts">[]</pre>
+      </div>
+    </section>
+    <section class="stage">
+      <div class="phone">
+        <div class="wa-bar">
+          <div class="avatar">S</div>
+          <div>
+            <strong>Safu</strong>
+            <span id="presence">online · mock</span>
+          </div>
+        </div>
+        <div id="log" class="log" role="log" aria-live="polite"></div>
+        <form class="composer" id="composer">
+          <label class="sr-only" for="text">Message</label>
+          <button class="icon-btn attach" id="attach" type="button" aria-label="Attach a file">+</button>
+          <input id="file" type="file" accept=".pdf,.docx,.txt,.png,.jpg,.jpeg,.webp,image/*" hidden>
+          <textarea id="text" rows="1" placeholder="Message"></textarea>
+          <button class="icon-btn" type="submit" aria-label="Send">➤</button>
+        </form>
+      </div>
+    </section>
+  </main>
+  <script src="/static/demo.js"></script>
+</body>
+</html>

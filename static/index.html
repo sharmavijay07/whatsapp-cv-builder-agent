@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Safu — a job-matched CV, on WhatsApp</title>
+  <meta name="description" content="Safu reads your CV and one job post, confirms the facts with you, and returns an editable Word CV, a PDF, a cover letter, and an interview pack.">
+  <link rel="icon" href="/favicon.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,560;9..144,620&family=Outfit:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header class="nav">
+    <a class="logo" href="/">Sa<span>fu</span></a>
+    <nav class="nav-links">
+      <a href="#how">How it works</a>
+      <a href="#pack">The pack</a>
+      <a href="#trust">Data</a>
+      <a class="btn solid" href="/demo">Open the demo</a>
+    </nav>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div>
+        <p class="eyebrow">WhatsApp CV studio</p>
+        <h1>The job-matched CV, written in the chat.</h1>
+        <p class="lede">Send the CV you already have and the post you want. Safu confirms every employer, date, and qualification with you, then returns an editable Word file, a PDF, a cover letter, and an interview pack.</p>
+        <div class="cta">
+          <a class="btn solid" href="/demo">Run the mock WhatsApp demo</a>
+          <a class="btn ghost" href="#how">See the six steps</a>
+        </div>
+        <ul class="pills">
+          <li>Word + PDF</li>
+          <li>Cover letter</li>
+          <li>Interview pack</li>
+          <li>ATS and job-match scores</li>
+        </ul>
+      </div>
+      <div class="phone" aria-hidden="true">
+        <div class="wa-bar">
+          <div class="avatar">S</div>
+          <div><strong>Safu</strong><span>online</span></div>
+        </div>
+        <div class="log">
+          <div class="bubble in">Send your current CV and one job post. Nothing is written until you confirm the facts.<time>09:14</time></div>
+          <div class="bubble out">Amina Wanjiku<time>09:14</time></div>
+          <div class="bubble in">Here is what I will use.<br><br>Operations Coordinator, SwiftHaul Logistics (March 2021 – Present)<br><br>Reply YES to continue.<time>09:16</time></div>
+          <div class="bubble out">YES<time>09:16</time></div>
+          <div class="bubble in">Your pack is ready.<br><br>ATS score: 100/100<br>Job match: 72/100<br><br>Missing: cycle counts, written updates, transport.<time>09:17</time></div>
+          <div class="bubble in"><a class="filechip">CV.docx</a><a class="filechip">CV.pdf</a><time>09:17</time></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="how">
+      <p class="eyebrow">The conversation</p>
+      <h2>Six steps. Generation waits for you.</h2>
+      <p class="muted">The agent asks for one thing at a time. A duplicate WhatsApp webhook does not start a second pack.</p>
+      <div class="grid-3" style="margin-top: 22px;">
+        <article class="card"><div class="step-no">01</div><h3>Name</h3><p class="muted">Safu introduces itself and asks for the name that should sit at the top of the CV.</p></article>
+        <article class="card"><div class="step-no">02</div><h3>Your CV</h3><p class="muted">PDF, Word, a photo (OCR), a link, or pasted text. The file is read into a structured record.</p></article>
+        <article class="card"><div class="step-no">03</div><h3>The job</h3><p class="muted">Paste the post, send a screenshot, or share a URL. Safu pulls the title, company, and keywords.</p></article>
+        <article class="card"><div class="step-no">04</div><h3>Confirm</h3><p class="muted">You see the employers, dates, and education it extracted. Reply YES, or correct a contact field.</p></article>
+        <article class="card"><div class="step-no">05</div><h3>Payment stub</h3><p class="muted">The pack price is shown. The demo gateway records PAY and charges nothing.</p></article>
+        <article class="card"><div class="step-no">06</div><h3>The pack</h3><p class="muted">Word and PDF files, scores, a cover letter, and interview notes arrive in the chat.</p></article>
+      </div>
+    </section>
+
+    <section class="band green" id="pack">
+      <p class="eyebrow" style="color:#d7ef4c;">What gets checked</p>
+      <h2>Invented facts are rejected.</h2>
+      <p class="muted">The draft is compared with the record extracted from your CV. Employers, dates, qualifications, and figures have to already be in that record.</p>
+      <div class="grid-4" style="margin-top: 22px;">
+        <article class="card"><h3>Employers</h3><p class="muted">A company that was not on the CV cannot appear on the rewrite.</p></article>
+        <article class="card"><h3>Dates</h3><p class="muted">A role cannot quietly move to an earlier year.</p></article>
+        <article class="card"><h3>Qualifications</h3><p class="muted">A diploma stays a diploma. A degree is not added.</p></article>
+        <article class="card"><h3>Figures</h3><p class="muted">Team sizes, percentages, and counts have to come from the source text.</p></article>
+      </div>
+    </section>
+
+    <section class="section" id="trust">
+      <p class="eyebrow">Data</p>
+      <h2>The database stores the order, not the CV.</h2>
+      <div class="grid-2">
+        <article class="card">
+          <h3>Stored</h3>
+          <p>Order id, step, paid flag, hand-off flag, delivery attempts, and the WhatsApp message id used to ignore retries.</p>
+        </article>
+        <article class="card">
+          <h3>Deleted</h3>
+          <p>Generated files expire 30 minutes after delivery. The working copy of the CV is removed once the pack is in your hands. An unfinished order gets one follow-up after 48 hours.</p>
+        </article>
+      </div>
+      <p class="muted">If a step fails, Safu retries from the files it already built or from the short-lived working copy. After repeated failure it flags a person, and it tells you to send the CV again rather than inventing a document.</p>
+    </section>
+
+    <section class="section" id="stack">
+      <p class="eyebrow">Under the hood</p>
+      <h2>Groq by default. Other models are a setting.</h2>
+      <div class="grid-3">
+        <article class="card"><h3>Groq</h3><p class="muted">Default model <code>openai/gpt-oss-120b</code> on the free tier, through the OpenAI-compatible API. Gemini, OpenAI, and Claude stay available via config.</p></article>
+        <article class="card"><h3>WhatsApp</h3><p class="muted">Meta Cloud API when you go live. This demo uses a fake chat so the full order runs with no token.</p></article>
+        <article class="card"><h3>Order state</h3><p class="muted">Memory in the demo. Supabase free tier when you want the rows to survive a restart. No CV column exists in the schema.</p></article>
+      </div>
+    </section>
+
+    <section class="section faq" id="price">
+      <p class="eyebrow">Price</p>
+      <h2>KES 1,500 for one application.</h2>
+      <p class="muted">That is the price shown inside the chat. The included gateway is a stub, so the demo does not take money. Swap the payment class when you connect M-Pesa or a card acquirer.</p>
+      <details>
+        <summary>What if the model is unsure?</summary>
+        <p>Say HUMAN, or Safu will hand off after a CV it cannot read. A person is alerted, and the bot stops writing.</p>
+      </details>
+      <details>
+        <summary>Can I edit the CV?</summary>
+        <p>Yes. The Word file is a single column with normal headings. The PDF matches it for sending onward.</p>
+      </details>
+      <details>
+        <summary>What does the sample candidate represent?</summary>
+        <p>Amina Wanjiku and Freightline Kenya are fictional, so the demo can run without anyone's real CV.</p>
+      </details>
+    </section>
+  </main>
+  <footer>
+    <div>Safu. Mock mode does not send WhatsApp messages.</div>
+    <a href="/demo">Open the demo</a>
+  </footer>
+</body>
+</html>

@@ -117,11 +117,17 @@ class Order:
         return {key: getattr(self, key) for key in ORDER_FIELDS}
 
 
+def _as_bool(value: object) -> bool:
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(value)
+
+
 def order_from_row(row: dict) -> Order:
     data = {key: row.get(key) for key in ORDER_FIELDS}
-    data["paid"] = bool(data.get("paid"))
-    data["handoff"] = bool(data.get("handoff"))
-    data["followup_sent"] = bool(data.get("followup_sent"))
+    data["paid"] = _as_bool(data.get("paid"))
+    data["handoff"] = _as_bool(data.get("handoff"))
+    data["followup_sent"] = _as_bool(data.get("followup_sent"))
     data["delivery_attempts"] = int(data.get("delivery_attempts") or 0)
     return Order(**data)
 

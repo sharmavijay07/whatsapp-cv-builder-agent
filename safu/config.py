@@ -86,13 +86,22 @@ def load_settings() -> Settings:
     app_mode = (os.getenv("APP_MODE") or "mock").strip().lower()
     if app_mode not in {"mock", "live"}:
         app_mode = "mock"
+    whatsapp_token = os.getenv("WHATSAPP_TOKEN") or ""
+    whatsapp_phone_number_id = os.getenv("WHATSAPP_PHONE_NUMBER_ID") or ""
+    # A public deploy with no WhatsApp credentials still serves the mock chat.
+    if app_mode == "live" and not (whatsapp_token and whatsapp_phone_number_id):
+        app_mode = "mock"
     provider = (os.getenv("LLM_PROVIDER") or "groq").strip().lower()
     data_dir = Path(os.getenv("DATA_DIR") or "var")
+    port = _int("PORT", 8765)
+    public_base_url = (
+        os.getenv("PUBLIC_BASE_URL") or os.getenv("RENDER_EXTERNAL_URL") or f"http://127.0.0.1:{port}"
+    ).rstrip("/")
     return Settings(
         app_mode=app_mode,
         host=os.getenv("HOST") or "0.0.0.0",
-        port=_int("PORT", 8765),
-        public_base_url=(os.getenv("PUBLIC_BASE_URL") or "http://127.0.0.1:8765").rstrip("/"),
+        port=port,
+        public_base_url=public_base_url,
         llm_provider=provider,
         groq_api_key=os.getenv("GROQ_API_KEY") or "",
         groq_model=os.getenv("GROQ_MODEL") or "openai/gpt-oss-120b",
@@ -108,8 +117,8 @@ def load_settings() -> Settings:
         anthropic_api_key=os.getenv("ANTHROPIC_API_KEY") or "",
         anthropic_model=os.getenv("ANTHROPIC_MODEL") or "claude-haiku-4-5",
         anthropic_base_url=(os.getenv("ANTHROPIC_BASE_URL") or "https://api.anthropic.com").rstrip("/"),
-        whatsapp_token=os.getenv("WHATSAPP_TOKEN") or "",
-        whatsapp_phone_number_id=os.getenv("WHATSAPP_PHONE_NUMBER_ID") or "",
+        whatsapp_token=whatsapp_token,
+        whatsapp_phone_number_id=whatsapp_phone_number_id,
         whatsapp_verify_token=os.getenv("WHATSAPP_VERIFY_TOKEN") or "safu-verify",
         whatsapp_app_secret=os.getenv("WHATSAPP_APP_SECRET") or "",
         whatsapp_graph_version=os.getenv("WHATSAPP_GRAPH_VERSION") or "v21.0",

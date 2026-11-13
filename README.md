@@ -122,6 +122,44 @@ cp .env.example .env
 
 Environment variables are listed in `.env.example`. None are hard-coded.
 
+## Deploy to Render
+
+The free web service is a single Python process (512 MB). It binds to Render's `$PORT`. With only `GROQ_API_KEY` filled in, the public URL serves the mock WhatsApp demo and calls Groq `openai/gpt-oss-120b`. Missing Supabase keys use a local SQLite file. Missing WhatsApp keys keep the app in demo mode, even if `APP_MODE` is set to `live`.
+
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/sharmavijay07/whatsapp-cv-builder-agent)
+
+`render.yaml` is the blueprint. Render runs:
+
+- Build: `pip install --no-cache-dir -r requirements.txt`
+- Start: `python -m safu`
+
+The process listens on `0.0.0.0:$PORT` with one worker. File links use `RENDER_EXTERNAL_URL` when `PUBLIC_BASE_URL` is unset.
+
+Required:
+
+- `GROQ_API_KEY` — the only value you type in the dashboard (`sync: false` in the blueprint). Rewriting uses Groq. If you leave it blank, the demo still loads and uses the local fact-locked writer.
+
+Set by the blueprint (change only if you mean to):
+
+- `LLM_PROVIDER=groq`
+- `GROQ_MODEL=openai/gpt-oss-120b`
+- `GROQ_BASE_URL=https://api.groq.com/openai/v1`
+- `APP_MODE=mock`
+- `ORDER_STORE=sqlite`
+- `DATA_DIR=/tmp/safu`
+- `HOST=0.0.0.0`
+- `PYTHON_VERSION=3.12.8`
+
+Optional, for a later live WhatsApp deploy:
+
+- `WHATSAPP_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_VERIFY_TOKEN`, `WHATSAPP_APP_SECRET` — all four, then set `APP_MODE=live`
+- `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, and `ORDER_STORE=supabase` after you run `supabase/schema.sql`
+- `PUBLIC_BASE_URL` if it should differ from Render's external URL
+- `ALERT_WEBHOOK_URL`, `OPS_TOKEN`
+- `OPENAI_API_KEY`, `GEMINI_API_KEY`, or `ANTHROPIC_API_KEY` if you switch `LLM_PROVIDER`
+
+`PORT` is injected by Render. Do not set it yourself.
+
 ### Credentials to go live
 
 1. Meta WhatsApp Cloud API: a test or production number, a permanent token (`WHATSAPP_TOKEN`), the phone number id, a verify token, and the app secret.

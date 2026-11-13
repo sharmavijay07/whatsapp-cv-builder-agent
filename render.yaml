@@ -1,0 +1,31 @@
+# Render free web service. One Python process, 512 MB.
+# https://render.com/docs/blueprint-spec
+services:
+  - type: web
+    name: whatsapp-cv-builder
+    runtime: python
+    plan: free
+    buildCommand: pip install --no-cache-dir -r requirements.txt
+    startCommand: python -m safu
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.8"
+      - key: GROQ_API_KEY
+        sync: false
+      - key: LLM_PROVIDER
+        value: groq
+      - key: GROQ_MODEL
+        value: openai/gpt-oss-120b
+      - key: GROQ_BASE_URL
+        value: https://api.groq.com/openai/v1
+      - key: APP_MODE
+        value: mock
+      - key: ORDER_STORE
+        value: sqlite
+      - key: DATA_DIR
+        value: /tmp/safu
+      - key: HOST
+        value: 0.0.0.0
+      - key: WEB_CONCURRENCY
+        value: "1"

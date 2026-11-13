@@ -1,3 +1,7 @@
+import sqlite3
+import threading
+from pathlib import Path
+
 import httpx
 
 from safu.models import ORDER_FIELDS, Order, order_from_row
@@ -110,7 +114,115 @@ class SupabaseOrderStore:
         }
 
 
-def build_store(order_store: str, supabase_url: str, supabase_key: str):
+class SQLiteOrderStore:
+    """Local order rows. The schema is ORDER_FIELDS plus message ids. No CV text."""
+
+    def __init__(self, path: Path):
+        self.path = path
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.Lock()
+        with self._connect() as conn:
+            columns = ", ".join(f"{name} TEXT" for name in ORDER_FIELDS if name != "id")
+            conn.execute(
+                f"CREATE TABLE IF NOT EXISTS orders (id TEXT PRIMARY KEY, {columns})"
+            )
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS wa_index (wa_id TEXT PRIMARY KEY, order_id TEXT NOT NULL)"
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS processed_messages (
+                    message_id TEXT PRIMARY KEY,
+                    order_id TEXT NOT NULL,
+                    received_at TEXT NOT NULL
+                )
+                """
+            )
+
+    def _connect(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self.path, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    def save(self, order: Order) -> None:
+        data = order.to_dict()
+        assignments = ", ".join(f"{name}=?" for name in ORDER_FIELDS if name != "id")
+        values = [str(data[name]) if data[name] is not None else None for name in ORDER_FIELDS]
+        with self._lock, self._connect() as conn:
+            conn.execute(
+                f"""
+                INSERT INTO orders ({", ".join(ORDER_FIELDS)})
+                VALUES ({", ".join("?" for _ in ORDER_FIELDS)})
+                ON CONFLICT(id) DO UPDATE SET {assignments}
+                """,
+                [*values, *values[1:]],
+            )
+            conn.execute(
+                """
+                INSERT INTO wa_index (wa_id, order_id) VALUES (?, ?)
+                ON CONFLICT(wa_id) DO UPDATE SET order_id=excluded.order_id
+                """,
+                (order.wa_id, order.id),
+            )
+
+    def get(self, order_id: str) -> Order | None:
+        with self._lock, self._connect() as conn:
+            row = conn.execute("SELECT * FROM orders WHERE id = ?", (order_id,)).fetchone()
+        return order_from_row(dict(row)) if row else None
+
+    def get_by_wa(self, wa_id: str) -> Order | None:
+        with self._lock, self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT orders.* FROM orders
+                JOIN wa_index ON wa_index.order_id = orders.id
+                WHERE wa_index.wa_id = ?
+                """,
+                (wa_id,),
+            ).fetchone()
+        return order_from_row(dict(row)) if row else None
+
+    def all(self) -> list[Order]:
+        with self._lock, self._connect() as conn:
+            rows = conn.execute("SELECT * FROM orders").fetchall()
+        return [order_from_row(dict(row)) for row in rows]
+
+    def has_message(self, message_id: str) -> bool:
+        with self._lock, self._connect() as conn:
+            row = conn.execute(
+                "SELECT message_id FROM processed_messages WHERE message_id = ?",
+                (message_id,),
+            ).fetchone()
+        return row is not None
+
+    def remember(self, message_id: str, order_id: str, received_at: str) -> None:
+        with self._lock, self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO processed_messages (message_id, order_id, received_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(message_id) DO NOTHING
+                """,
+                (message_id, order_id, received_at),
+            )
+
+    def dump(self) -> dict:
+        with self._lock, self._connect() as conn:
+            orders = conn.execute("SELECT * FROM orders").fetchall()
+            messages = conn.execute(
+                "SELECT message_id, order_id, received_at FROM processed_messages"
+            ).fetchall()
+        return {
+            "orders": [order_from_row(dict(row)).to_dict() for row in orders],
+            "messages": [dict(row) for row in messages],
+        }
+
+
+def build_store(order_store: str, supabase_url: str, supabase_key: str, data_dir: Path | None = None):
+    """Supabase when it is configured. Otherwise a local SQLite file, or memory when asked."""
+    directory = data_dir or Path("var")
     if order_store == "supabase" and supabase_url and supabase_key:
         return SupabaseOrderStore(supabase_url, supabase_key), "supabase"
-    return MemoryOrderStore(), "memory"
+    if order_store == "memory":
+        return MemoryOrderStore(), "memory"
+    return SQLiteOrderStore(directory / "orders.sqlite"), "sqlite"

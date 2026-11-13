@@ -122,7 +122,12 @@ class Runtime:
 
 def build_runtime(settings: Settings, llm=AUTO, channel: Channel | None = None, cloud: CloudWhatsApp | None = None) -> Runtime:
     settings.data_dir.mkdir(parents=True, exist_ok=True)
-    store, store_name = build_store(settings.order_store, settings.supabase_url, settings.supabase_service_key)
+    store, store_name = build_store(
+        settings.order_store,
+        settings.supabase_url,
+        settings.supabase_service_key,
+        settings.data_dir,
+    )
     if llm is AUTO:
         from safu.llm import build_llm
 

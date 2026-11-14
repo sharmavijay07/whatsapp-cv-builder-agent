@@ -1,4 +1,5 @@
 import asyncio
+import hmac
 import json
 import uuid
 from contextlib import asynccontextmanager
@@ -10,14 +11,18 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTex
 from fastapi.staticfiles import StaticFiles
 
 from safu.config import Settings, load_settings
+from safu.errors import PaymentAuthError
 from safu.logutil import configure_logging, log_event
 from safu.models import Incoming
+from safu.payments import PaymentGateway
 from safu.samples import JOB_HTML
 from safu.service import (
     AUTO,
     build_runtime,
+    fulfill_payment,
     handle_incoming,
     inspector,
+    notify_payment_failed,
     open_demo_session,
     public_messages,
     run_followups,
@@ -25,7 +30,7 @@ from safu.service import (
     run_sweep,
     say,
 )
-from safu.whatsapp import mime_for, parse_webhook, verify_meta_signature
+from safu.whatsapp import mime_for, parse_webhook, safe_filename, verify_meta_signature
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 
@@ -42,10 +47,26 @@ async def _repeat(stop: asyncio.Event, interval: int, fn) -> None:
             continue
 
 
-def create_app(settings: Settings | None = None, llm=AUTO) -> FastAPI:
+def _presented_secret(request: Request) -> str:
+    header = request.headers.get("authorization") or ""
+    if header.lower().startswith("bearer "):
+        return header[7:].strip()
+    return (request.headers.get("x-admin-token") or request.headers.get("x-ops-token") or "").strip()
+
+
+def _secret_ok(presented: str, expected: str) -> bool:
+    if not presented or not expected:
+        return False
+    try:
+        return hmac.compare_digest(presented, expected)
+    except (TypeError, ValueError):
+        return False
+
+
+def create_app(settings: Settings | None = None, llm=AUTO, payments: PaymentGateway | None = None) -> FastAPI:
     settings = settings or load_settings()
     configure_logging(settings.log_level)
-    runtime = build_runtime(settings, llm=llm)
+    runtime = build_runtime(settings, llm=llm, payments=payments)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -64,6 +85,15 @@ def create_app(settings: Settings | None = None, llm=AUTO) -> FastAPI:
 
     app = FastAPI(title="Safu", lifespan=lifespan)
     app.state.runtime = runtime
+
+    @app.middleware("http")
+    async def security_headers(request: Request, call_next):
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["X-Frame-Options"] = "DENY"
+        return response
+
     if STATIC_DIR.exists():
         app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
@@ -76,11 +106,26 @@ def create_app(settings: Settings | None = None, llm=AUTO) -> FastAPI:
 
     def require_ops(request: Request) -> None:
         current = rt()
-        if current.settings.app_mode == "mock" and not current.settings.ops_token:
+        admin = current.settings.admin_token
+        legacy = current.settings.ops_token
+        if current.settings.app_mode == "mock" and not admin and not legacy:
             return
-        token = request.headers.get("x-ops-token")
-        if not current.settings.ops_token or token != current.settings.ops_token:
-            raise HTTPException(status_code=401, detail="ops_unauthorized")
+        presented = _presented_secret(request)
+        if _secret_ok(presented, admin) or _secret_ok(presented, legacy):
+            return
+        raise HTTPException(status_code=401, detail="ops_unauthorized")
+
+    def require_cron(request: Request) -> None:
+        current = rt()
+        presented = _presented_secret(request)
+        allowed = (
+            current.settings.cron_secret,
+            current.settings.admin_token,
+            current.settings.ops_token,
+        )
+        if any(_secret_ok(presented, expected) for expected in allowed):
+            return
+        raise HTTPException(status_code=401, detail="cron_unauthorized")
 
     def payload(session):
         return {
@@ -113,6 +158,11 @@ def create_app(settings: Settings | None = None, llm=AUTO) -> FastAPI:
             "llm_fallback": None if current.llm is not None else "safe_local",
             "store": current.store_name,
             "payment": current.payments.name,
+            "payment_ready": current.payments.ready,
+            "require_payment": current.settings.require_payment,
+            "alerts": current.alerter.mode,
+            "ocr": "groq_vision" if current.vision is not None else "tesseract",
+            "followup_template": current.settings.whatsapp_followup_template,
             "file_ttl_seconds": current.settings.file_ttl_seconds,
         }
 
@@ -229,8 +279,9 @@ def create_app(settings: Settings | None = None, llm=AUTO) -> FastAPI:
             content=data,
             media_type=mime_for(item.filename),
             headers={
-                "Content-Disposition": f'attachment; filename="{item.filename}"',
+                "Content-Disposition": f'attachment; filename="{safe_filename(item.filename)}"',
                 "Cache-Control": "no-store",
+                "X-Content-Type-Options": "nosniff",
             },
         )
 
@@ -247,6 +298,10 @@ def create_app(settings: Settings | None = None, llm=AUTO) -> FastAPI:
     async def webhook(request: Request):
         body = await request.body()
         current = rt()
+        if len(body) > 1_000_000:
+            return Response(status_code=413)
+        if current.settings.app_mode == "live" and not current.settings.whatsapp_app_secret:
+            return Response(status_code=403)
         if not verify_meta_signature(body, request.headers.get("x-hub-signature-256"), current.settings.whatsapp_app_secret):
             return Response(status_code=403)
         try:
@@ -256,6 +311,70 @@ def create_app(settings: Settings | None = None, llm=AUTO) -> FastAPI:
         for incoming in parse_webhook(payload_json):
             await asyncio.to_thread(handle_incoming, current, incoming)
         return {"ok": True}
+
+    @app.get("/payment/return", response_class=HTMLResponse)
+    def payment_return():
+        return HTMLResponse(
+            "<!doctype html><meta charset=\"utf-8\"><title>Safu</title>"
+            "<p>Return to WhatsApp. Safu sends the documents after the payment provider confirms them.</p>"
+        )
+
+    async def _apply_payment(outcome, provider: str):
+        current = rt()
+        if outcome is None:
+            return
+        if outcome.status == "paid" and outcome.order_id:
+            await asyncio.to_thread(fulfill_payment, current, outcome.order_id, provider)
+        elif outcome.status == "failed" and outcome.order_id:
+            await asyncio.to_thread(notify_payment_failed, current, outcome.order_id, outcome.reason or provider)
+        elif outcome.reason == "unmatched":
+            current.alerter.fire(
+                "warning",
+                "payment_unmatched",
+                "",
+                provider,
+                current.clock.now().isoformat(),
+            )
+
+    @app.post("/webhooks/mpesa")
+    async def mpesa_webhook(request: Request):
+        body = await request.body()
+        if len(body) > 200_000:
+            return JSONResponse({"ResultCode": 0, "ResultDesc": "Ignored"}, status_code=413)
+        try:
+            outcome = rt().payments.handle_mpesa(body, request.query_params.get("token"))
+        except PaymentAuthError:
+            return JSONResponse({"ResultCode": 1, "ResultDesc": "Rejected"}, status_code=403)
+        await _apply_payment(outcome, "mpesa")
+        return {"ResultCode": 0, "ResultDesc": "Accepted"}
+
+    @app.post("/webhooks/paystack")
+    async def paystack_webhook(request: Request):
+        body = await request.body()
+        if len(body) > 200_000:
+            return Response(status_code=413)
+        try:
+            outcome = rt().payments.handle_paystack(body, request.headers.get("x-paystack-signature"))
+        except PaymentAuthError:
+            return Response(status_code=401)
+        await _apply_payment(outcome, "paystack")
+        return {"ok": True}
+
+    @app.post("/api/cron/tick")
+    def cron_tick(request: Request):
+        require_cron(request)
+        current = rt()
+        return {
+            "ok": True,
+            "followups": run_followups(current),
+            "recovered": run_recovery(current),
+            "removed": run_sweep(current),
+        }
+
+    @app.post("/api/demo/recovery/run")
+    def demo_recovery():
+        require_mock()
+        return {"ok": True, "recovered": run_recovery(rt())}
 
     @app.post("/api/ops/recovery/run")
     def ops_recovery(request: Request):

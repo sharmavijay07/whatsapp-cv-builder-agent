@@ -25,3 +25,19 @@ create table if not exists processed_messages (
 
 create index if not exists orders_wa_id_idx on orders (wa_id);
 create index if not exists orders_status_updated_idx on orders (status, updated_at);
+
+-- Payment references only. No phone numbers, emails, CV text, or document bodies.
+create table if not exists payments (
+  reference text primary key,
+  provider_id text,
+  order_id text not null,
+  provider text not null,
+  amount integer not null,
+  currency text not null,
+  status text not null,
+  checkout_url text,
+  updated_at timestamptz not null
+);
+
+create index if not exists payments_order_idx on payments (order_id);
+create index if not exists payments_provider_idx on payments (provider_id);

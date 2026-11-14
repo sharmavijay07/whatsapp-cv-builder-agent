@@ -1,5 +1,14 @@
 # Render free web service. One Python process, 512 MB.
 # https://render.com/docs/blueprint-spec
+#
+# runtime stays python. The live service whatsapp-cv-builder was created as
+# Python, and Render rejects a runtime change. Photo reading on this service
+# uses Groq vision (GROQ_VISION_MODEL). Dockerfile in this repo is the free
+# Docker path with Tesseract, for a new service only.
+#
+# Secrets use sync: false. On a service that already exists, Blueprint sync
+# does not add sync:false keys. Set those in the Dashboard. See README,
+# "Go live with free tools".
 services:
   - type: web
     name: whatsapp-cv-builder
@@ -19,13 +28,72 @@ services:
         value: openai/gpt-oss-120b
       - key: GROQ_BASE_URL
         value: https://api.groq.com/openai/v1
+      - key: GROQ_VISION_MODEL
+        value: qwen/qwen3.8-27b
+      - key: OCR_PROVIDER
+        value: auto
+      # APP_MODE, ORDER_STORE, and PAYMENT_PROVIDER are set in the Dashboard
+      # so a later Blueprint sync does not force the demo back on.
+      # Defaults when unset: APP_MODE=mock, ORDER_STORE=sqlite, PAYMENT_PROVIDER=stub.
       - key: APP_MODE
-        value: mock
+        sync: false
       - key: ORDER_STORE
-        value: sqlite
+        sync: false
+      - key: PAYMENT_PROVIDER
+        sync: false
+      - key: REQUIRE_PAYMENT
+        value: "true"
       - key: DATA_DIR
         value: /tmp/safu
       - key: HOST
         value: 0.0.0.0
       - key: WEB_CONCURRENCY
         value: "1"
+      - key: WHATSAPP_FOLLOWUP_TEMPLATE
+        value: safu_followup_48h
+      - key: WHATSAPP_TEMPLATE_LANGUAGE
+        value: en
+      - key: MPESA_ENV
+        value: sandbox
+      - key: WHATSAPP_TOKEN
+        sync: false
+      - key: WHATSAPP_PHONE_NUMBER_ID
+        sync: false
+      - key: WHATSAPP_VERIFY_TOKEN
+        sync: false
+      - key: WHATSAPP_APP_SECRET
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+      - key: MPESA_CONSUMER_KEY
+        sync: false
+      - key: MPESA_CONSUMER_SECRET
+        sync: false
+      - key: MPESA_SHORTCODE
+        sync: false
+      - key: MPESA_PASSKEY
+        sync: false
+      - key: MPESA_CALLBACK_SECRET
+        sync: false
+      - key: PAYSTACK_SECRET_KEY
+        sync: false
+      - key: GMAIL_USER
+        sync: false
+      - key: GMAIL_APP_PASSWORD
+        sync: false
+      - key: OWNER_EMAIL
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      - key: ADMIN_TOKEN
+        sync: false
+      - key: CRON_SECRET
+        sync: false
+      - key: ALERT_WEBHOOK_URL
+        sync: false
+      - key: OPS_TOKEN
+        sync: false
